@@ -1,0 +1,88 @@
+#region Namespaces
+using System;
+using System.Data;
+using Microsoft.SqlServer.Dts.Runtime;
+using System.Net;
+using System.Net.Mail;
+using System.Data.SqlClient;
+using System.Data.OleDb;
+#endregion
+
+namespace ST_238d538c8cbc44bfb7899f35e7939dae
+{
+    [Microsoft.SqlServer.Dts.Tasks.ScriptTask.SSISScriptTaskEntryPointAttribute]
+    public partial class ScriptMain : Microsoft.SqlServer.Dts.Tasks.ScriptTask.VSTARTScriptObjectModelBase
+    {
+        public void Main()
+        {
+            try
+            {
+                // Initial success message
+                string body = "SSIS Package Runs Successfully!";
+
+                // Connection string for HealthcareDW database
+                string dbConnectionString = "Data Source=DESKTOP-6HREA33;Initial Catalog=HealthcareDW;Integrated Security=True;";
+
+                using (SqlConnection connection = new SqlConnection(dbConnectionString))
+                {
+                    connection.Open();
+
+                    // SQL query to get last Row Count from DimPatients table
+                    string getLastRowCountQuery = "SELECT LastRowCount FROM dbo.RowCounts WHERE TableName = 'DimPatients'";
+                    SqlCommand getLastRowCountCommand = new SqlCommand(getLastRowCountQuery, connection);
+                    int lastRowCount = (int)getLastRowCountCommand.ExecuteScalar();
+
+                    // SQL query to get current Row Count from DimPatients table
+                    string getCurrentRowCountQuery = "SELECT COUNT(*) FROM dbo.DimPatients";
+                    SqlCommand getCurrentRowCountCommand = new SqlCommand(getCurrentRowCountQuery, connection);
+                    int currentRowCount = (int)getCurrentRowCountCommand.ExecuteScalar();
+
+
+                    // Calculate and update changes count
+                    int changesCount = currentRowCount - lastRowCount;
+                    body += $"\nRow Count of Changes: {changesCount}";
+                    body += $"\nCurrent Row Count in Target Table: {currentRowCount}";
+
+                    // Save current Row Count as Last Row Count for the next run
+                    string updateLastRowCountQuery = "UPDATE dbo.RowCounts SET LastRowCount = @CurrentRowCount WHERE TableName = 'DimPatients'";
+                    SqlCommand updateLastRowCountCommand = new SqlCommand(updateLastRowCountQuery, connection);
+                    updateLastRowCountCommand.Parameters.AddWithValue("@CurrentRowCount", currentRowCount);
+                    updateLastRowCountCommand.ExecuteNonQuery();
+                }
+
+                // Send email with updated body
+                string fromEmail = Dts.Variables["User_FromEmail"].Value.ToString();
+                string fromPassword = Dts.Variables["User_FromPassword"].Value.ToString();
+                string toEmail = Dts.Variables["User_ToEmail"].Value.ToString();
+                string subject = Dts.Variables["User_EmailSubject"].Value.ToString();
+
+                using (SmtpClient client = new SmtpClient("smtp.gmail.com"))
+                {
+                    client.Port = 587;
+                    client.Credentials = new NetworkCredential(fromEmail, fromPassword);
+                    client.EnableSsl = true;
+
+                    MailMessage message = new MailMessage(fromEmail, toEmail, subject, body);
+                    client.Send(message);
+                }
+
+                Dts.TaskResult = (int)ScriptResults.Success;
+            }
+
+            catch (Exception ex)
+            {
+                // Log or handle exceptions
+                Dts.Events.FireError(0, "Script Task Error", ex.Message, string.Empty, 0);
+                Dts.TaskResult = (int)ScriptResults.Failure;
+            }
+           
+            
+        }
+
+        enum ScriptResults
+        {
+            Success = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Success,
+            Failure = Microsoft.SqlServer.Dts.Runtime.DTSExecResult.Failure
+        };
+    }
+}
